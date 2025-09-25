@@ -1,1 +1,9 @@
-
+/* CSS/MAIN.CSS */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Segoe UI', sans-serif;
+            background: #3a6ea5;
+            overflow: hidden;
+        }

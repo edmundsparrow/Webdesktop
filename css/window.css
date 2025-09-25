@@ -1,0 +1,41 @@
+/* SYSTEM/CSS/WINDOW.CSS */
+        .window {
+            position: absolute;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            resize: both;
+            overflow: hidden;
+            min-width: 200px;
+            min-height: 150px;
+            display: flex;
+            flex-direction: column;
+            z-index: 10;
+        }
+
+        .window-title-bar {
+            background: linear-gradient(to bottom, #d6e2f1, #c1d5f0);
+            border-bottom: 1px solid #a6c9e2;
+            padding: 4px 8px;
+            font-weight: bold;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: grab;
+        }
+
+        .window-content {
+            flex-grow: 1;
+            padding: 8px;
+            overflow: auto;
+        }
+
+        .window-controls button {
+            background: #fff;
+            border: 1px solid #bbb;
+            border-radius: 3px;
+            padding: 1px 6px;
+            margin-left: 4px;
+            cursor: pointer;
+        }

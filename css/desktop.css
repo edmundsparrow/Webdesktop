@@ -1,0 +1,35 @@
+/* SYSTEM/CSS/DESKTOP.CSS */
+#desktop {
+    height: calc(100% - 40px);
+    background-image: url('assets/default.svg');
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    background-attachment: fixed;
+    background-color: #234a73; /* Fallback color while SVG loads */
+}
+
+#icons {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 10px;
+}
+
+.desktop-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 5px;
+    margin: 5px;
+    cursor: pointer;
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+    text-align: center;
+}
+
+.desktop-icon img {
+    width: 48px;
+    height: 48px;
+    margin-bottom: 5px;
+}
