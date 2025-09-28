@@ -74,7 +74,6 @@ It works with touch, basic remotes, or simple keyboard input, making it suitable
 ---
 
 ## Getting Started
-
 The easiest way to try Webdesktop is to open it directly in your browser:  
 
 👉 **[edmundsparrow-webos.netlify.app](https://edmundsparrow-webos.netlify.app/)** No installation needed. Just visit the link and explore the environment.  
@@ -85,10 +84,12 @@ The easiest way to try Webdesktop is to open it directly in your browser:
 This project is released under the **GNU General Public License v3.0 (GPL-3.0)**.  
 A full copy of the license text is available in the **[LICENSE](LICENSE)** file.
 
+🌐 Landing Page: Full Product Overview & ROI Calculator **[https://cutt.ly/jrMzVswz](https://cutt.ly/jrMzVswz)
+
 Webdesktop is an open-source project and welcomes contributions! If you find a bug, have a feature request, or want to contribute code, please check the [Issues](https://github.com/edmundsparrow/Webdesktop/issues) tab.
 
 ---
 
-**Topics/Tags for GitHub:** `webdesktop` `desktop-environment` `edmundsparrow` `iot` `unified-ui` `pwa`
+#wbdesktop #webdesktop-environment #gpio #iot #unified-ui #pwa #edmundsparrow
 
 
