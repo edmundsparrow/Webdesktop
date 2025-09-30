@@ -1,112 +1,328 @@
-// FILE: /SYSTEM/CORE/window-manager.js
-// VERSION: 1.0.0
-//
-// WINDOW-MANAGER.JS - WINDOW LIFECYCLE MANAGEMENT SERVICE
-//
-// PURPOSE:
-//   Core service managing window creation, controls, positioning, and cleanup
-//   with proper viewport constraints and taskbar integration.
-//
-// ARCHITECTURE:
-//   - Singleton service with window.WindowManager namespace
-//   - Map-based window tracking with unique ID generation
-//   - Direct event handling for window controls and drag operations
-//   - Automatic cascade positioning with viewport constraints
-//
-// LIFECYCLE:
-//   1. createWindow() generates unique window with standard controls
-//   2. setupWindowControls() handles minimize/maximize/close actions
-//   3. makeWindowDraggable() enables drag positioning with bounds
-//   4. Window tracking in activeWindows Map with state metadata
-//   5. Cleanup removes DOM elements and tracking on window close
-//
-// KEY FEATURES:
-//   • Standard window creation with title bar and control buttons
-//   • Minimize/maximize/close with proper state management
-//   • Drag-and-drop positioning with viewport boundary constraints
-//   • Taskbar integration for minimized window restoration
-//   • Touch device support for mobile drag operations
-//
-// INTEGRATION:
-//   - Apps: Use createWindow() for UI containers
-//   - Taskbar: Minimized windows appear as clickable taskbar items
-//   - Viewport: Automatic constraint handling for all screen sizes
-//
-// DEPENDENCIES:
-//   - Modern browser with touch event support
-//
-// CUDOS:
-//   edmundsparrow.netlify.app | whatsappme @ 09024054758 | 
-//   webaplications5050@gmail.com
-//
-// ---------------------------------------------------------------------
+/* ========================================
+ * FILE: core/window-manager.js
+ * VERSION: 1.0.0
+ * BUILD DATE: 2025-09-29
+ *
+ * PURPOSE:
+ * Core service for managing the lifecycle, position, and
+ * interaction of all desktop-style windows in Unity Station.
+ *
+ * ARCHITECTURE:
+ * - Singleton object exposed as window.WindowManager
+ * - Manages active window Map, z-index, and window IDs.
+ * - Handles UI element creation, dragging, and control events.
+ *
+ * DEPENDENCIES:
+ * - EventBus (for emitting lifecycle events)
+ *
+ * LIFECYCLE:
+ * 1. Loaded after EventBus.
+ * 2. Initialized once, runs throughout environment lifetime.
+ * 3. Registers itself with the Docs service.
+ *
+ * FEATURES:
+ * - Window creation with title, content, size.
+ * - Minimize, Maximize/Restore, Close functions.
+ * - Drag-and-drop movement.
+ * - Auto-focus (bring to front) on click.
+ * - Emits key lifecycle events via EventBus.
+ *
+ * EXAMPLE USAGE:
+ * WindowManager.createWindow('Terminal', '<pre>Loading...</pre>', 600, 400);
+ *
+ * AUTHOR:
+ *   edmundsparrow.netlify.app | whatsappme @ 09024054758 | webaplications5050@gmail.com
+ * ======================================== */
 
-
-// JS/CORE/WINDOW-MANAGER.JS - Updated with full window controls
 window.WindowManager = {
     activeWindows: new Map(),
     nextWindowId: 0,
+    highestZIndex: 1000,
     
-    createWindow(title, content, width = 600, height = 400) {
-        const windowId = `win-${this.nextWindowId++}`;
+    // Create new window - core functionality that never changes
+    createWindow(title, content, width = 400, height = 300) {
+        const windowId = `win-${++this.nextWindowId}`;
+        
+        // Input validation
+        if (!title || !content) {
+            console.error('WindowManager.createWindow: Title and content required');
+            return null;
+        }
+        
+        // Create window element
         const win = document.createElement('div');
-        win.classList.add('window');
+        win.className = 'window';
         win.id = windowId;
         
-        // Window HTML template now includes all three control buttons
+        // Build window HTML
         win.innerHTML = `
             <div class="window-title-bar">
-                <span>${title}</span>
+                <span class="window-title">${this.escapeHtml(title)}</span>
                 <div class="window-controls">
-                    <button class="minimize-btn">_</button>
-                    <button class="maximize-btn">□</button>
-                    <button class="close-btn">×</button>
+                    <button class="minimize-btn" title="Minimize">_</button>
+                    <button class="maximize-btn" title="Maximize">□</button>
+                    <button class="close-btn" title="Close">×</button>
                 </div>
             </div>
             <div class="window-content">${content}</div>
         `;
         
-        // Get viewport dimensions
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
+        // Calculate safe dimensions
+        const viewport = this.getViewportConstraints();
+        const safeWidth = Math.min(width, viewport.maxWidth);
+        const safeHeight = Math.min(height, viewport.maxHeight);
         
-        // Ensure window fits within viewport with margins
-        const maxWidth = Math.max(200, viewportWidth - 40);
-        const maxHeight = Math.max(150, viewportHeight - 80);
+        // Position window (cascade effect)
+        const position = this.calculatePosition(safeWidth, safeHeight);
         
-        const finalWidth = Math.min(width, maxWidth);
-        const finalHeight = Math.min(height, maxHeight);
+        // Apply styles
+        win.style.cssText = `
+            position: absolute;
+            width: ${safeWidth}px;
+            height: ${safeHeight}px;
+            left: ${position.x}px;
+            top: ${position.y}px;
+            z-index: ${++this.highestZIndex};
+            pointer-events: auto;
+        `;
         
-        // Set constrained window size and original dimensions for maximization
-        win.style.width = `${finalWidth}px`;
-        win.style.height = `${finalHeight}px`;
-        win.dataset.originalWidth = finalWidth;
-        win.dataset.originalHeight = finalHeight;
-        win.dataset.originalLeft = '';
-        win.dataset.originalTop = '';
+        // Store window data
+        this.activeWindows.set(windowId, {
+            element: win,
+            title: title,
+            isMinimized: false,
+            isMaximized: false,
+            originalWidth: safeWidth,
+            originalHeight: safeHeight,
+            originalX: position.x,
+            originalY: position.y
+        });
         
-        // Calculate safe positioning - ensure title bar controls are always accessible
-        const safeMargin = 20;
-        const taskbarHeight = 40;
+        // Add to DOM
+        this.appendToContainer(win);
         
-        const maxLeft = Math.max(safeMargin, viewportWidth - finalWidth - safeMargin);
-        const maxTop = Math.max(safeMargin, viewportHeight - finalHeight - taskbarHeight - safeMargin);
+        // Setup window functionality
+        this.setupWindowControls(win, windowId);
+        this.makeWindowDraggable(win);
         
-        const cascadeOffset = Math.min(25, Math.floor(viewportWidth / 30));
+        // Emit event
+        if (window.EventBus) {
+            window.EventBus.emit('window-created', { windowId, title });
+        }
         
-        const baseLeft = 50;
-        const baseTop = 50;
-        const offsetLeft = baseLeft + (this.nextWindowId * cascadeOffset);
-        const offsetTop = baseTop + (this.nextWindowId * cascadeOffset);
+        return win;
+    },
+    
+    // Window control handlers
+    setupWindowControls(win, windowId) {
+        const minimizeBtn = win.querySelector('.minimize-btn');
+        const maximizeBtn = win.querySelector('.maximize-btn');
+        const closeBtn = win.querySelector('.close-btn');
         
-        const finalLeft = Math.min(Math.max(safeMargin, offsetLeft), maxLeft);
-        const finalTop = Math.min(Math.max(safeMargin, offsetTop), maxTop);
+        minimizeBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.minimizeWindow(windowId);
+        };
         
-        win.style.left = `${finalLeft}px`;
-        win.style.top = `${finalTop}px`;
-        win.style.pointerEvents = 'auto';
+        maximizeBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.toggleMaximize(windowId);
+        };
         
-        // Add to windows container
+        closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            this.closeWindow(windowId);
+        };
+        
+        // Focus handling
+        win.addEventListener('mousedown', () => this.bringToFront(win));
+        win.addEventListener('touchstart', () => this.bringToFront(win));
+    },
+    
+    // Minimize window
+    minimizeWindow(windowId) {
+        const windowData = this.activeWindows.get(windowId);
+        if (!windowData || windowData.isMinimized) return;
+        
+        const win = windowData.element;
+        win.style.display = 'none';
+        windowData.isMinimized = true;
+        
+        // Emit event for taskbar
+        if (window.EventBus) {
+            window.EventBus.emit('window-minimized', { windowId, title: windowData.title });
+        }
+    },
+    
+    // Restore window
+    restoreWindow(windowId) {
+        const windowData = this.activeWindows.get(windowId);
+        if (!windowData || !windowData.isMinimized) return;
+        
+        const win = windowData.element;
+        win.style.display = 'block';
+        windowData.isMinimized = false;
+        this.bringToFront(win);
+        
+        // Emit event
+        if (window.EventBus) {
+            window.EventBus.emit('window-restored', { windowId });
+        }
+    },
+    
+    // Toggle maximize
+    toggleMaximize(windowId) {
+        const windowData = this.activeWindows.get(windowId);
+        if (!windowData) return;
+        
+        const win = windowData.element;
+        const viewport = this.getViewportConstraints();
+        
+        if (!windowData.isMaximized) {
+            // Store current position/size
+            const rect = win.getBoundingClientRect();
+            windowData.restoreX = rect.left;
+            windowData.restoreY = rect.top;
+            windowData.restoreWidth = rect.width;
+            windowData.restoreHeight = rect.height;
+            
+            // Maximize
+            win.style.left = '0px';
+            win.style.top = '0px';
+            win.style.width = viewport.width + 'px';
+            win.style.height = viewport.availableHeight + 'px';
+            win.classList.add('maximized');
+            
+            windowData.isMaximized = true;
+        } else {
+            // Restore
+            win.style.left = windowData.restoreX + 'px';
+            win.style.top = windowData.restoreY + 'px';
+            win.style.width = windowData.restoreWidth + 'px';
+            win.style.height = windowData.restoreHeight + 'px';
+            win.classList.remove('maximized');
+            
+            windowData.isMaximized = false;
+        }
+        
+        this.bringToFront(win);
+    },
+    
+    // Close window
+    closeWindow(windowId) {
+        const windowData = this.activeWindows.get(windowId);
+        if (!windowData) return;
+        
+        const win = windowData.element;
+        
+        // Emit close event
+        if (window.EventBus) {
+            window.EventBus.emit('window-closing', { windowId });
+        }
+        
+        // Remove from DOM and tracking
+        win.remove();
+        this.activeWindows.delete(windowId);
+        
+        // Emit closed event
+        if (window.EventBus) {
+            window.EventBus.emit('window-closed', { windowId });
+        }
+    },
+    
+    // Drag functionality
+    makeWindowDraggable(win) {
+        const titleBar = win.querySelector('.window-title-bar');
+        let isDragging = false;
+        let dragOffset = { x: 0, y: 0 };
+        
+        const startDrag = (clientX, clientY, e) => {
+            // Don't drag if clicking controls or if maximized
+            if (e.target.closest('.window-controls')) return;
+            
+            const windowData = this.activeWindows.get(win.id);
+            if (windowData && windowData.isMaximized) return;
+            
+            isDragging = true;
+            const rect = win.getBoundingClientRect();
+            dragOffset.x = clientX - rect.left;
+            dragOffset.y = clientY - rect.top;
+            
+            titleBar.style.cursor = 'grabbing';
+            this.bringToFront(win);
+            e.preventDefault();
+        };
+        
+        const performDrag = (clientX, clientY) => {
+            if (!isDragging) return;
+            
+            const viewport = this.getViewportConstraints();
+            let newX = clientX - dragOffset.x;
+            let newY = clientY - dragOffset.y;
+            
+            // Constrain to viewport
+            const minVisible = 50;
+            newX = Math.max(-win.offsetWidth + minVisible, Math.min(newX, viewport.width - minVisible));
+            newY = Math.max(0, Math.min(newY, viewport.availableHeight - 30));
+            
+            win.style.left = newX + 'px';
+            win.style.top = newY + 'px';
+        };
+        
+        const endDrag = () => {
+            if (isDragging) {
+                isDragging = false;
+                titleBar.style.cursor = 'grab';
+            }
+        };
+        
+        // Mouse events
+        titleBar.addEventListener('mousedown', (e) => startDrag(e.clientX, e.clientY, e));
+        document.addEventListener('mousemove', (e) => performDrag(e.clientX, e.clientY));
+        document.addEventListener('mouseup', endDrag);
+        
+        // Touch events
+        titleBar.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            startDrag(touch.clientX, touch.clientY, e);
+        });
+        document.addEventListener('touchmove', (e) => {
+            if (e.touches[0]) performDrag(e.touches[0].clientX, e.touches[0].clientY);
+        });
+        document.addEventListener('touchend', endDrag);
+        
+        titleBar.style.cursor = 'grab';
+    },
+    
+    // Bring window to front
+    bringToFront(win) {
+        win.style.zIndex = ++this.highestZIndex;
+    },
+    
+    // Utility methods
+    getViewportConstraints() {
+        return {
+            width: window.innerWidth,
+            height: window.innerHeight,
+            availableHeight: window.innerHeight - 40, // Account for taskbar
+            maxWidth: Math.max(300, window.innerWidth - 40),
+            maxHeight: Math.max(200, window.innerHeight - 80)
+        };
+    },
+    
+    calculatePosition(width, height) {
+        const viewport = this.getViewportConstraints();
+        const cascade = (this.nextWindowId - 1) * 25;
+        const baseX = 50 + cascade;
+        const baseY = 50 + cascade;
+        
+        return {
+            x: Math.min(baseX, viewport.width - width - 20),
+            y: Math.min(baseY, viewport.availableHeight - height - 20)
+        };
+    },
+    
+    appendToContainer(win) {
         const container = document.getElementById('windows-container');
         if (container) {
             container.appendChild(win);
@@ -118,308 +334,81 @@ window.WindowManager = {
                 document.body.appendChild(win);
             }
         }
-        
-        // Track the window
-        this.activeWindows.set(windowId, { 
-            element: win, 
-            title: title,
-            isMinimized: false,
-            isMaximized: false
-        });
-        
-        // Setup all window controls
-        this.setupWindowControls(win, windowId, title);
-        
-        // Make window draggable
-        this.makeWindowDraggable(win);
-        
-        return win;
-    },
-
-    setupWindowControls(win, windowId, title) {
-        const minimizeBtn = win.querySelector('.minimize-btn');
-        const maximizeBtn = win.querySelector('.maximize-btn');
-        const closeBtn = win.querySelector('.close-btn');
-
-        // Minimize button
-        minimizeBtn.onclick = () => {
-            this.minimizeWindow(windowId);
-        };
-        
-        // Maximize button
-        maximizeBtn.onclick = () => {
-            this.toggleMaximize(windowId);
-        };
-
-        // Close button - clean up properly
-        closeBtn.onclick = () => {
-            // Remove from taskbar if present
-            const taskItem = document.querySelector(`[data-window-id="${windowId}"]`);
-            if (taskItem) taskItem.remove();
-            
-            // Remove from DOM and tracking
-            win.remove();
-            this.activeWindows.delete(windowId);
-        };
-        
-        // Window focus handling
-        win.addEventListener('mousedown', () => {
-            this.bringToFront(win);
-        });
-        
-        // Touch support for mobile devices
-        win.addEventListener('touchstart', () => {
-            this.bringToFront(win);
-        });
-    },
-
-    // Centralized minimize function
-    minimizeWindow(windowId) {
-        const windowData = this.activeWindows.get(windowId);
-        if (!windowData) return;
-        
-        const win = windowData.element;
-        const title = windowData.title;
-        
-        // Hide window
-        win.style.display = 'none';
-        windowData.isMinimized = true;
-        
-        // Create taskbar item
-        const taskbarItems = document.querySelector('.taskbar-items');
-        if (!taskbarItems) return;
-        
-        // Remove existing taskbar item if present
-        const existing = taskbarItems.querySelector(`[data-window-id="${windowId}"]`);
-        if (existing) existing.remove();
-        
-        // Create new taskbar item
-        const taskItem = document.createElement('div');
-        taskItem.className = 'taskbar-item';
-        taskItem.dataset.windowId = windowId;
-        taskItem.textContent = title;
-        taskItem.style.cssText = `
-            background: rgba(255,255,255,0.2);
-            color: white;
-            padding: 4px 8px;
-            margin: 2px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 12px;
-            display: inline-block;
-            max-width: 150px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            transition: background-color 0.2s;
-        `;
-        
-        taskItem.onclick = () => {
-            win.style.display = 'block';
-            windowData.isMinimized = false;
-            this.bringToFront(win);
-            taskItem.remove();
-        };
-        
-        taskItem.onmouseover = () => {
-            taskItem.style.background = 'rgba(255,255,255,0.3)';
-        };
-        
-        taskItem.onmouseout = () => {
-            taskItem.style.background = 'rgba(255,255,255,0.2)';
-        };
-        
-        taskbarItems.appendChild(taskItem);
     },
     
-    // Toggle maximize function
-    toggleMaximize(windowId) {
-        const windowData = this.activeWindows.get(windowId);
-        if (!windowData) return;
-
-        const win = windowData.element;
-        const titleBar = win.querySelector('.window-title-bar');
-
-        if (!windowData.isMaximized) {
-            // Store original position and size
-            win.dataset.originalLeft = win.style.left;
-            win.dataset.originalTop = win.style.top;
-            win.dataset.originalWidth = win.style.width;
-            win.dataset.originalHeight = win.style.height;
-
-            // Maximize to fill the viewport (minus taskbar)
-            win.style.left = '0';
-            win.style.top = '0';
-            win.style.width = '100vw';
-            win.style.height = `calc(100vh - 40px)`; // Account for a 40px taskbar
-            win.classList.add('maximized');
-
-            // Disable dragging
-            titleBar.style.cursor = 'default';
-            titleBar.removeEventListener('mousedown', this.makeWindowDraggable);
-        } else {
-            // Restore to original position and size
-            win.style.left = win.dataset.originalLeft;
-            win.style.top = win.dataset.originalTop;
-            win.style.width = win.dataset.originalWidth;
-            win.style.height = win.dataset.originalHeight;
-            win.classList.remove('maximized');
-
-            // Re-enable dragging
-            this.makeWindowDraggable(win);
-        }
-        windowData.isMaximized = !windowData.isMaximized;
-        this.bringToFront(win);
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     },
-
-    makeWindowDraggable(win) {
-        const titleBar = win.querySelector('.window-title-bar');
-        let isDragging = false;
-        let dragOffset = { x: 0, y: 0 };
-        
-        // Mouse events
-        titleBar.addEventListener('mousedown', (e) => {
-            const windowData = this.activeWindows.get(win.id);
-            if (e.target.closest('.window-controls') || windowData.isMaximized) return;
-            
-            isDragging = true;
-            const rect = win.getBoundingClientRect();
-            dragOffset.x = e.clientX - rect.left;
-            dragOffset.y = e.clientY - rect.top;
-            
-            titleBar.style.cursor = 'grabbing';
-            this.bringToFront(win);
-            e.preventDefault();
-        });
-        
-        // Touch events for mobile support
-        titleBar.addEventListener('touchstart', (e) => {
-            const windowData = this.activeWindows.get(win.id);
-            if (e.target.closest('.window-controls') || windowData.isMaximized) return;
-            
-            const touch = e.touches[0];
-            isDragging = true;
-            const rect = win.getBoundingClientRect();
-            dragOffset.x = touch.clientX - rect.left;
-            dragOffset.y = touch.clientY - rect.top;
-            
-            this.bringToFront(win);
-            e.preventDefault();
-        });
-        
-        // Mouse move
-        document.addEventListener('mousemove', (e) => {
-            if (!isDragging) return;
-            
-            this.moveWindow(win, e.clientX, e.clientY, dragOffset);
-        });
-        
-        // Touch move
-        document.addEventListener('touchmove', (e) => {
-            if (!isDragging) return;
-            
-            const touch = e.touches[0];
-            this.moveWindow(win, touch.clientX, touch.clientY, dragOffset);
-            e.preventDefault();
-        });
-        
-        // Mouse up
-        document.addEventListener('mouseup', () => {
-            if (isDragging) {
-                isDragging = false;
-                titleBar.style.cursor = 'grab';
-            }
-        });
-        
-        // Touch end
-        document.addEventListener('touchend', () => {
-            if (isDragging) {
-                isDragging = false;
-            }
-        });
-    },
-
-    // Helper method for window movement with safe bounds
-    moveWindow(win, clientX, clientY, dragOffset) {
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-        const taskbarHeight = 40;
-        
-        let newX = clientX - dragOffset.x;
-        let newY = clientY - dragOffset.y;
-        
-        const titleBarHeight = 30;
-        const minVisibleArea = 50;
-        
-        const maxX = viewportWidth - minVisibleArea;
-        const maxY = viewportHeight - taskbarHeight - titleBarHeight;
-        const minX = -(win.offsetWidth - minVisibleArea);
-        const minY = 0;
-        
-        newX = Math.max(minX, Math.min(newX, maxX));
-        newY = Math.max(minY, Math.min(newY, maxY));
-        
-        win.style.left = newX + 'px';
-        win.style.top = newY + 'px';
-    },
-
-    bringToFront(win) {
-        let maxZ = 0;
-        document.querySelectorAll('.window').forEach(w => {
-            const z = parseInt(w.style.zIndex) || 0;
-            if (z > maxZ) maxZ = z;
-        });
-        win.style.zIndex = maxZ + 1;
-    },
-
-    // Show desktop functionality - minimize all windows
-    minimizeAllWindows() {
-        this.activeWindows.forEach((windowData, windowId) => {
-            if (!windowData.isMinimized && !windowData.isMaximized) {
-                this.minimizeWindow(windowId);
-            }
-        });
-    },
-
-    // Utility methods
+    
+    // Public API
     getAllWindows() {
         return Array.from(this.activeWindows.values());
     },
-
+    
     getWindow(windowId) {
         return this.activeWindows.get(windowId);
     }
 };
 
+// Register documentation with Docs service - wait for it to be ready
+(function registerWindowManagerDoc() {
+  const tryRegister = () => {
+    // Check if Docs service is available and ready
+    if (window.Docs && window.Docs.initialized && typeof window.Docs.register === 'function') {
+      window.Docs.register('window-manager', {
+        name: "WindowManager",
+        version: "1.0.0",
+        description: "Core service for managing the lifecycle, position, and interaction of all windows in the Unity Station desktop environment.",
+        type: "System Service",
+        dependencies: ["EventBus"],
+        features: [
+          "Global singleton (window.WindowManager)",
+          "Handles window creation, minimization, maximization, and closing.",
+          "Manages z-index stacking and window focus.",
+          "Implements window dragging functionality.",
+          "Emits EventBus events for all key window lifecycle actions."
+        ],
+        methods: [
+          { name: "createWindow(title, content, width, height)", description: "Creates and displays a new window." },
+          { name: "minimizeWindow(windowId)", description: "Minimizes a window to the taskbar." },
+          { name: "restoreWindow(windowId)", description: "Restores a minimized window." },
+          { name: "closeWindow(windowId)", description: "Closes and destroys a window." },
+          { name: "toggleMaximize(windowId)", description: "Toggles between maximized and restored size." },
+          { name: "getAllWindows()", description: "Returns an array of all active window data objects." },
+          { name: "getWindow(windowId)", description: "Returns the data object for a specific window ID." }
+        ],
+        events: [
+          "window-created", "window-minimized", "window-restored",
+          "window-closing", "window-closed", "window-focused"
+        ],
+        autoGenerated: false
+      });
+      console.log('WindowManager documentation registered with Docs service');
+      return true;
+    }
+    return false;
+  };
 
-// code to make this core app appear in about
-// Register self-documentation
-if (window.Docs && typeof window.Docs.registerDocumentation === 'function') {
-    setTimeout(() => {
-        window.Docs.registerDocumentation('windowmanager', {
-            name: "Window Manager",
-            version: "1.0.0",
-            description: "Core service managing window creation, controls, positioning, and cleanup with viewport constraints",
-            type: "System Service",
-            features: [
-                "Standard window creation with title bar and control buttons",
-                "Minimize/maximize/close functionality with state management",
-                "Drag-and-drop window positioning with boundary constraints", 
-                "Taskbar integration for minimized window restoration",
-                "Touch device support with mobile drag operations",
-                "Automatic cascade positioning for multiple windows"
-            ],
-            dependencies: [],
-            methods: [
-                { name: "createWindow", description: "Create new window with title, content, and dimensions" },
-                { name: "minimizeWindow", description: "Hide window and create taskbar restoration item" },
-                { name: "toggleMaximize", description: "Toggle between maximized and restored window states" },
-                { name: "makeWindowDraggable", description: "Enable drag positioning with viewport constraints" },
-                { name: "bringToFront", description: "Bring window to front by managing z-index values" }
-            ],
-            notes: "Core system service handling all window lifecycle management. Integrates with taskbar for minimized window restoration.",
-            cudos: "edmundsparrow.netlify.app | whatsappme @ 09024054758 | webaplications5050@gmail.com",
-            auto_generated: false
-        });
-    }, 100);
-}
+  // Try immediate registration
+  if (tryRegister()) return;
 
+  // Wait for docs-ready event via EventBus (WindowManager must load after EventBus)
+  if (window.EventBus) {
+    const onDocsReady = () => {
+      if (tryRegister()) {
+        window.EventBus.off('docs-ready', onDocsReady);
+      }
+    };
+    window.EventBus.on('docs-ready', onDocsReady);
+  }
+
+  // Fallback: poll for Docs initialization (in case EventBus fails)
+  let attempts = 0;
+  const pollInterval = setInterval(() => {
+    if (tryRegister() || attempts++ > 50) {
+      clearInterval(pollInterval);
+    }
+  }, 100);
+})();

@@ -1,158 +1,332 @@
-// system/js/taskbar.js - Updated with clickable time to launch Clock app
-// =============================
+/* ========================================
+ * FILE: core/taskbar.js
+ * PURPOSE: Taskbar management and system tray
+ * DEPENDENCIES: EventBus, WindowManager, AppRegistry
+ * ======================================== */
 
 window.Taskbar = {
+    taskbarItems: new Map(),
+    clockInterval: null,
+    initialized: false,
+    
+    // Initialize taskbar
     init() {
-        const systemTray = document.querySelector('.system-tray');
-        this.updateClock(systemTray);
-        setInterval(() => this.updateClock(systemTray), 1000);
-
-        // Wire Start button to system app
-        document.querySelector('.start-button').onclick = () => {
-            AppRegistry.openApp('startmenu');
-        };
+        if (this.initialized) return;
+        console.log('Taskbar initializing...');
         
-        // Setup show desktop button
-        this.setupShowDesktop();
+        this.setupTaskbar();
+        this.setupEventListeners();
+        this.startClock();
+        this.initialized = true;
         
-        // Setup clickable time
-        this.setupClickableTime(systemTray);
+        console.log('Taskbar initialized');
+        
+        // Emit ready event
+        if (window.EventBus) {
+            window.EventBus.emit('taskbar-ready');
+        }
     },
-
-    updateClock(tray) {
-        const now = new Date();
-        const timeStr = now.toLocaleTimeString([], {
-            hour: '2-digit',
-            minute: '2-digit'
-        });
+    
+    // Setup taskbar HTML structure or enhance existing
+    setupTaskbar() {
+        let taskbar = document.getElementById('taskbar');
         
-        // Update or create time element
-        let timeElement = tray.querySelector('#taskbar-time');
-        if (!timeElement) {
-            timeElement = document.createElement('div');
-            timeElement.id = 'taskbar-time';
-            timeElement.style.cssText = `
-                cursor: pointer;
-                padding: 4px 8px;
-                border-radius: 4px;
-                transition: background-color 0.2s;
-                user-select: none;
-                font-size: 12px;
-                color: white;
+        if (!taskbar) {
+            // Create taskbar if it doesn't exist
+            taskbar = document.createElement('div');
+            taskbar.id = 'taskbar';
+            taskbar.innerHTML = `
+                <button class="start-button" id="start-btn">
+                    <span>⊞</span> Start
+                </button>
+                <div class="taskbar-items" id="taskbar-items"></div>
+                <div class="clock" id="clock">--:--</div>
             `;
-            
-            // Add hover effect
-            timeElement.addEventListener('mouseover', () => {
-                timeElement.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-            });
-            
-            timeElement.addEventListener('mouseout', () => {
-                timeElement.style.backgroundColor = 'transparent';
-            });
-            
-            tray.appendChild(timeElement);
+            document.body.appendChild(taskbar);
         }
         
-        timeElement.textContent = timeStr;
-    },
-
-    setupClickableTime(systemTray) {
-        // Add click handler to launch clock app
-        systemTray.addEventListener('click', (e) => {
-            if (e.target.id === 'taskbar-time' || e.target.closest('#taskbar-time')) {
-                if (window.AppRegistry) {
-                    window.AppRegistry.openApp('clock');
+        // Setup click handlers for existing elements
+        const startBtn = document.getElementById('start-btn') || document.getElementById('start-button');
+        if (startBtn) {
+            startBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleStartMenu();
+            });
+        }
+        
+        // Add network icon if not present
+        if (!document.querySelector('.network-icon')) {
+            const networkIcon = document.createElement('button');
+            networkIcon.className = 'network-icon';
+            // Desktop computer emoji as requested
+            networkIcon.innerHTML = '<span style="font-size:14px;">🖥️</span>';
+            networkIcon.title = 'Network Status';
+            networkIcon.style.marginRight = '6px';
+            networkIcon.style.background = 'transparent';
+            networkIcon.style.border = 'none';
+            networkIcon.style.cursor = 'pointer';
+            networkIcon.addEventListener('click', () => {
+                console.log('Network status clicked - script block needed');
+                // Placeholder for network functionality
+            });
+            
+            // Insert before clock
+            const clock = document.getElementById('clock');
+            if (clock && clock.parentNode) {
+                clock.parentNode.insertBefore(networkIcon, clock);
+            }
+        }
+        
+        // Add show desktop functionality if not present
+        if (!document.querySelector('.show-desktop-button')) {
+            const showDesktopBtn = document.createElement('button');
+            showDesktopBtn.className = 'show-desktop-button';
+            // Your exact show desktop icon - taller to match PC emoji height
+            showDesktopBtn.innerHTML = `<img src="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='22' height='22'><rect x='3' y='3' width='16' height='16' rx='2' ry='2' fill='%23ffffff'/><path d='M5 15h12v2H5z' fill='%23000000'/></svg>" alt="Show Desktop" style="width:18px;height:18px;">`;
+            showDesktopBtn.title = 'Show Desktop';
+            showDesktopBtn.style.marginRight = '6px';
+            showDesktopBtn.style.background = 'transparent';
+            showDesktopBtn.style.border = 'none';
+            showDesktopBtn.style.cursor = 'pointer';
+            showDesktopBtn.addEventListener('click', () => this.showDesktop());
+            
+            // Insert before network icon
+            const networkButton = document.querySelector('.network-icon');
+            if (networkButton && networkButton.parentNode) {
+                networkButton.parentNode.insertBefore(showDesktopBtn, networkButton);
+            } else {
+                // Fallback: insert before clock
+                const clock = document.getElementById('clock');
+                if (clock && clock.parentNode) {
+                    clock.parentNode.insertBefore(showDesktopBtn, clock);
                 }
             }
+        }
+    },
+    
+    // Setup event listeners
+    setupEventListeners() {
+        if (!window.EventBus) return;
+        
+        // Window events
+        window.EventBus.on('window-minimized', (data) => {
+            this.addTaskbarItem(data.windowId, data.title);
+        });
+        
+        window.EventBus.on('window-restored', (data) => {
+            this.removeTaskbarItem(data.windowId);
+        });
+        
+        window.EventBus.on('window-closed', (data) => {
+            this.removeTaskbarItem(data.windowId);
+        });
+        
+        window.EventBus.on('window-created', (data) => {
+            // Remove from taskbar if it was there (window restored)
+            this.removeTaskbarItem(data.windowId);
         });
     },
-
-    setupShowDesktop() {
-        const showDesktopBtn = document.querySelector('.show-desktop-button');
-        if (showDesktopBtn) {
-            showDesktopBtn.addEventListener('click', () => {
-                // Use WindowManager's minimize all function
-                if (window.WindowManager && typeof window.WindowManager.minimizeAllWindows === 'function') {
-                    window.WindowManager.minimizeAllWindows();
-                } else {
-                    // Fallback: minimize all visible windows manually
-                    document.querySelectorAll('.window').forEach(win => {
-                        if (win.style.display !== 'none') {
-                            const windowId = win.id;
-                            const title = win.querySelector('.window-title-bar span')?.textContent || 'Window';
-                            
-                            // Hide window
-                            win.style.display = 'none';
-                            
-                            // Create taskbar item
-                            this.addTaskbarItem(windowId, title, win);
-                        }
-                    });
+    
+    // Start the clock
+    startClock() {
+        this.updateClock();
+        if (this.clockInterval) {
+            clearInterval(this.clockInterval);
+        }
+        this.clockInterval = setInterval(() => {
+            this.updateClock();
+        }, 1000);
+    },
+    
+    // Update clock display
+    updateClock() {
+        const clock = document.getElementById('clock');
+        if (clock) {
+            const now = new Date();
+            const timeString = now.toLocaleTimeString([], { 
+                hour: '2-digit', 
+                minute: '2-digit',
+                hour12: true 
+            });
+            clock.textContent = timeString;
+            clock.title = now.toLocaleDateString([], {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
+            });
+        }
+    },
+    
+    // Add taskbar item for minimized window
+    addTaskbarItem(windowId, title) {
+        const taskbarItems = document.getElementById('taskbar-items');
+        if (!taskbarItems) return;
+        
+        // Remove existing item if present
+        this.removeTaskbarItem(windowId);
+        
+        const item = document.createElement('div');
+        item.className = 'taskbar-item';
+        item.id = `taskbar-${windowId}`;
+        item.title = title;
+        
+        // Truncate long titles
+        const displayTitle = title.length > 15 ? title.substring(0, 12) + '...' : title;
+        item.textContent = displayTitle;
+        
+        // Click handler to restore window
+        item.addEventListener('click', () => {
+            this.restoreWindow(windowId);
+        });
+        
+        taskbarItems.appendChild(item);
+        this.taskbarItems.set(windowId, item);
+        
+        // Scroll to show new item if needed
+        this.scrollTaskbarItems();
+    },
+    
+    // Remove taskbar item
+    removeTaskbarItem(windowId) {
+        const item = this.taskbarItems.get(windowId);
+        if (item && item.parentNode) {
+            item.remove();
+            this.taskbarItems.delete(windowId);
+        }
+    },
+    
+    // Restore window from taskbar
+    restoreWindow(windowId) {
+        if (window.WindowManager) {
+            window.WindowManager.restoreWindow(windowId);
+        }
+    },
+    
+    // Toggle start menu
+    toggleStartMenu() {
+        if (window.StartMenu) {
+            window.StartMenu.toggle();
+        } else {
+            // Fallback for basic start menu
+            const startMenu = document.getElementById('start-menu');
+            if (startMenu) {
+                startMenu.classList.toggle('open');
+            }
+        }
+    },
+    
+    // Show desktop functionality
+    showDesktop() {
+        if (window.DesktopManager) {
+            window.DesktopManager.showDesktop();
+        } else if (window.WindowManager) {
+            // Fallback: minimize all windows
+            const windows = window.WindowManager.getAllWindows();
+            windows.forEach(windowData => {
+                if (!windowData.isMinimized) {
+                    window.WindowManager.minimizeWindow(windowData.element.id);
                 }
             });
         }
     },
-
-    // Helper function for show desktop functionality
-    addTaskbarItem(windowId, title, windowElement) {
-        const taskbarItems = document.querySelector('.taskbar-items');
-        if (!taskbarItems) return;
-
-        // Remove existing item
-        const existing = taskbarItems.querySelector(`[data-window-id="${windowId}"]`);
-        if (existing) existing.remove();
+    
+    // Scroll taskbar items if overflow
+    scrollTaskbarItems() {
+        const taskbarItems = document.getElementById('taskbar-items');
+        if (taskbarItems && taskbarItems.scrollWidth > taskbarItems.clientWidth) {
+            taskbarItems.scrollLeft = taskbarItems.scrollWidth;
+        }
+    },
+    
+    // Get taskbar height
+    getHeight() {
+        return 40; // Standard taskbar height
+    },
+    
+    // Update taskbar for mobile/desktop
+    updateLayout(isMobile) {
+        const taskbar = document.getElementById('taskbar');
+        const startText = document.querySelector('.start-text') || taskbar?.querySelector('button span:last-child');
         
-        // Create taskbar item with consistent styling
-        const taskItem = document.createElement('div');
-        taskItem.className = 'taskbar-item';
-        taskItem.dataset.windowId = windowId;
-        taskItem.textContent = title;
-        taskItem.style.cssText = `
-            background: rgba(255,255,255,0.2);
-            color: white;
-            padding: 4px 8px;
-            margin: 2px;
-            border-radius: 3px;
-            cursor: pointer;
-            font-size: 12px;
-            display: inline-block;
-            max-width: 150px;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            transition: background-color 0.2s;
-        `;
+        if (taskbar) {
+            taskbar.classList.toggle('mobile-layout', isMobile);
+            taskbar.classList.toggle('desktop-layout', !isMobile);
+        }
         
-        // Hover effects
-        taskItem.onmouseover = () => {
-            taskItem.style.background = 'rgba(255,255,255,0.3)';
-        };
-        
-        taskItem.onmouseout = () => {
-            taskItem.style.background = 'rgba(255,255,255,0.2)';
-        };
-        
-        // Click to restore
-        taskItem.onclick = () => {
-            windowElement.style.display = 'block';
-            
-            // Bring to front
-            if (window.WindowManager && typeof window.WindowManager.bringToFront === 'function') {
-                window.WindowManager.bringToFront(windowElement);
-            } else {
-                let maxZ = 0;
-                document.querySelectorAll('.window').forEach(w => {
-                    const z = parseInt(w.style.zIndex) || 0;
-                    if (z > maxZ) maxZ = z;
-                });
-                windowElement.style.zIndex = maxZ + 1;
-            }
-            
-            taskItem.remove();
-        };
-        
-        taskbarItems.appendChild(taskItem);
+        // Hide start text on mobile
+        if (startText && startText.textContent === 'Start') {
+            startText.style.display = isMobile ? 'none' : 'inline';
+        }
+    },
+    
+    // Cleanup
+    destroy() {
+        if (this.clockInterval) {
+            clearInterval(this.clockInterval);
+            this.clockInterval = null;
+        }
+        this.taskbarItems.clear();
+        this.initialized = false;
     }
 };
 
-// Auto-init when DOM ready
-document.addEventListener("DOMContentLoaded", () => Taskbar.init());
+// Register documentation with Docs service - wait for it to be ready
+(function registerTaskbarDoc() {
+  const tryRegister = () => {
+    if (window.Docs && window.Docs.initialized && typeof window.Docs.register === 'function') {
+      window.Docs.register('taskbar', {
+        name: "Taskbar",
+        version: "1.0.0",
+        description: "System taskbar providing window management, system tray, clock, and quick access to system functions.",
+        type: "System Service",
+        features: [
+          "Minimized window tracking and restoration",
+          "Real-time clock display with date tooltip",
+          "Start menu integration",
+          "Show desktop functionality",
+          "Network status indicator",
+          "Dynamic window item management",
+          "Mobile/desktop responsive layout",
+          "Auto-scrolling for overflow items"
+        ],
+        methods: [
+          { name: "init()", description: "Initialize the taskbar system" },
+          { name: "addTaskbarItem(windowId, title)", description: "Add a minimized window to taskbar" },
+          { name: "removeTaskbarItem(windowId)", description: "Remove window from taskbar" },
+          { name: "restoreWindow(windowId)", description: "Restore a minimized window" },
+          { name: "showDesktop()", description: "Minimize all windows to show desktop" },
+          { name: "toggleStartMenu()", description: "Toggle start menu visibility" },
+          { name: "updateLayout(isMobile)", description: "Update layout for mobile/desktop" },
+          { name: "getHeight()", description: "Get taskbar height in pixels" }
+        ],
+        autoGenerated: false
+      });
+      console.log('Taskbar documentation registered with Docs service');
+      return true;
+    }
+    return false;
+  };
+
+  // Try immediate registration
+  if (tryRegister()) return;
+
+  // Wait for docs-ready event
+  if (window.EventBus) {
+    const onDocsReady = () => {
+      if (tryRegister()) {
+        window.EventBus.off('docs-ready', onDocsReady);
+      }
+    };
+    window.EventBus.on('docs-ready', onDocsReady);
+  }
+
+  // Fallback: poll for Docs initialization
+  let attempts = 0;
+  const pollInterval = setInterval(() => {
+    if (tryRegister() || attempts++ > 50) {
+      clearInterval(pollInterval);
+    }
+  }, 100);
+})();
+

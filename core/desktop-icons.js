@@ -1,431 +1,578 @@
-// JS/CORE/DESKP.JS - Adaptive Desktop Icon Manager
+/* ========================================
+ * FILE: core/desktop-icons.js
+ * VERSION: 1.0.1 (FIXED)
+ * BUILD DATE: 2025-09-29
+ *
+ * PURPOSE:
+ * Manages the display, styling, and user interaction (click/context menu)
+ * for all desktop icons visible on the Unity Station desktop surface.
+ *
+ * FIXED: Double-click behavior now works correctly.
+ *
+ * AUTHOR:
+ * Edmundsparrow.netlify.app | whatsappme @ 09024054758 | webaplications5050@gmail.com
+ * ======================================== */
+
 window.DesktopIconManager = {
-    // Configuration
-    settings: {
-        iconSize: 'medium',        // small, medium, large
-        layoutMode: 'auto',       // auto, grid, list
-        maxIconsPerRow: 'auto',   // auto, 2, 3, 4, 5, 6
-        showLabels: true,
-        doubleClickToOpen: true,
-        iconSpacing: 'normal'     // tight, normal, loose
-    },
-    
-    // State
-    registeredApps: new Map(),
+    iconContainer: null,
     hiddenApps: new Set(),
-    systemApps: new Set(['startmenu', 'settings', 'task-manager', 'sysinfo']), // Won't show on desktop
-    currentLayout: null,
-    iconsContainer: null,
-    
-    // Icon size configurations
-    iconSizes: {
-        small: { size: 32, fontSize: '10px', padding: '4px' },
-        medium: { size: 48, fontSize: '12px', padding: '6px' },
-        large: { size: 64, fontSize: '14px', padding: '8px' }
+    systemApps: new Set(['about', 'desktop-settings']),
+    systemAppsNoDesktop: new Set(['startmenu', 'taskbar']), 
+    settings: {
+        showLabels: true,
+        doubleClickToOpen: false,
     },
+    initialized: false,
     
-    // Spacing configurations
-    spacingConfig: {
-        tight: { gap: '4px', margin: '8px' },
-        normal: { gap: '8px', margin: '12px' },
-        loose: { gap: '12px', margin: '16px' }
-    },
-
     init() {
-        this.iconsContainer = document.getElementById('icons');
-        if (!this.iconsContainer) {
-            console.error('Desktop icons container not found');
-            return;
+        if (this.initialized) return;
+        console.log('DesktopIconManager initializing...');
+        
+        this.setupIconContainer();
+        this.setupEventListeners();
+
+        if (window.DesktopSettingsApp) {
+            const initialSettings = window.DesktopSettingsApp.loadSettings();
+            this.updateSettings(initialSettings, { isInitialLoad: true });
+            console.log('DesktopIconManager loaded initial settings.');
         }
 
-        // Load settings from localStorage
-        this.loadSettings();
-        
-        // Listen for app registrations
-        if (window.EventBus) {
-            window.EventBus.on('app-registered', (app) => this.handleAppRegistered(app));
-        }
-        
-        // Listen for window resize
-        window.addEventListener('resize', () => this.debounce(() => this.updateLayout(), 300));
-        
-        // Initialize layout
-        this.updateLayout();
-        
-        // Listen for settings changes
-        window.addEventListener('desktop-settings-changed', (e) => {
-            this.updateSettings(e.detail);
-        });
+        this.refreshIcons();
+        this.initialized = true;
         
         console.log('DesktopIconManager initialized');
-    },
-
-    loadSettings() {
-        const saved = localStorage.getItem('desktop-icon-settings');
-        if (saved) {
-            try {
-                this.settings = { ...this.settings, ...JSON.parse(saved) };
-            } catch (e) {
-                console.warn('Failed to load desktop settings, using defaults');
-            }
-        }
         
-        const hiddenApps = localStorage.getItem('hidden-desktop-apps');
-        if (hiddenApps) {
-            try {
-                this.hiddenApps = new Set(JSON.parse(hiddenApps));
-            } catch (e) {
-                console.warn('Failed to load hidden apps list');
-            }
+        if (window.EventBus) {
+            window.EventBus.emit('desktop-icons-ready');
         }
     },
-
-    saveSettings() {
-        localStorage.setItem('desktop-icon-settings', JSON.stringify(this.settings));
-        localStorage.setItem('hidden-desktop-apps', JSON.stringify([...this.hiddenApps]));
-    },
-
-    updateSettings(newSettings) {
-        this.settings = { ...this.settings, ...newSettings };
-        this.saveSettings();
-        this.updateLayout();
-    },
-
-    handleAppRegistered(app) {
-        // Skip system apps that shouldn't appear on desktop
-        if (this.systemApps.has(app.id)) {
-            return;
-        }
-        
-        this.registeredApps.set(app.id, app);
-        this.updateLayout();
-    },
-
-    calculateOptimalLayout() {
-        const viewport = {
-            width: window.innerWidth,
-            height: window.innerHeight - 40 // Account for taskbar
-        };
-        
-        const iconConfig = this.iconSizes[this.settings.iconSize];
-        const spacing = this.spacingConfig[this.settings.iconSpacing];
-        
-        // Calculate available space
-        const availableWidth = viewport.width - (parseInt(spacing.margin) * 2);
-        const availableHeight = viewport.height - (parseInt(spacing.margin) * 2);
-        
-        // Calculate icon with label dimensions
-        const iconTotalWidth = iconConfig.size + parseInt(spacing.gap);
-        const iconTotalHeight = iconConfig.size + (this.settings.showLabels ? 20 : 0) + parseInt(spacing.gap);
-        
-        // Calculate how many icons fit
-        const maxCols = Math.floor(availableWidth / iconTotalWidth);
-        const maxRows = Math.floor(availableHeight / iconTotalHeight);
-        const maxIcons = maxCols * maxRows;
-        
-        // Determine layout mode
-        let layoutMode = this.settings.layoutMode;
-        if (layoutMode === 'auto') {
-            // Auto-detect best layout based on screen dimensions
-            if (viewport.width < 480) {
-                layoutMode = maxCols <= 2 ? 'list' : 'grid';
-            } else if (viewport.width < 768) {
-                layoutMode = maxCols <= 4 ? 'grid' : 'grid';
+    
+    setupIconContainer() {
+        let container = document.getElementById('icons');
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'icons';
+            container.className = 'desktop-icons-container';
+            const desktop = document.getElementById('desktop');
+            if (desktop) {
+                desktop.appendChild(container);
             } else {
-                layoutMode = 'grid';
+                document.body.appendChild(container);
             }
         }
         
-        // Calculate columns based on settings or auto-detection
-        let columns;
-        if (this.settings.maxIconsPerRow === 'auto') {
-            if (layoutMode === 'list') {
-                columns = 1;
-            } else {
-                columns = Math.min(maxCols, 6); // Cap at 6 for usability
-            }
-        } else {
-            columns = Math.min(parseInt(this.settings.maxIconsPerRow), maxCols);
-        }
-        
-        return {
-            mode: layoutMode,
-            columns: columns,
-            maxIcons: maxIcons,
-            iconConfig: iconConfig,
-            spacing: spacing,
-            canFitAllApps: this.registeredApps.size <= maxIcons
-        };
+        this.iconContainer = container;
+        this.applyContainerStyles();
     },
-
-    updateLayout() {
-        if (!this.iconsContainer) return;
+    
+    applyContainerStyles() {
+        if (!this.iconContainer || !window.DisplayManager) return;
         
-        this.currentLayout = this.calculateOptimalLayout();
-        this.applyLayoutStyles();
-        this.renderIcons();
+        window.DisplayManager.applyStylesToContainer(this.iconContainer);
     },
-
-    applyLayoutStyles() {
-        const { mode, columns, iconConfig, spacing } = this.currentLayout;
-        
-        // Clear existing styles
-        this.iconsContainer.className = 'icons-container';
-        
-        // Apply layout-specific styles
-        const styles = {
-            display: mode === 'list' ? 'flex' : 'grid',
-            flexDirection: mode === 'list' ? 'column' : undefined,
-            gridTemplateColumns: mode === 'grid' ? `repeat(${columns}, 1fr)` : undefined,
-            gap: spacing.gap,
-            padding: spacing.margin,
-            maxHeight: '100%',
-            overflowY: 'auto',
-            overflowX: 'hidden'
-        };
-        
-        Object.assign(this.iconsContainer.style, styles);
-        
-        // Add CSS class for mode-specific styling
-        this.iconsContainer.classList.add(`layout-${mode}`);
-    },
-
-    renderIcons() {
-        if (!this.iconsContainer) return;
-        
-        // Clear existing icons
-        this.iconsContainer.innerHTML = '';
-        
-        // Filter visible apps
-        const visibleApps = Array.from(this.registeredApps.values())
-            .filter(app => !this.hiddenApps.has(app.id) && !this.systemApps.has(app.id));
-        
-        // Check if we need to show a subset due to space constraints
-        const { maxIcons, canFitAllApps } = this.currentLayout;
-        
-        if (!canFitAllApps && visibleApps.length > maxIcons) {
-            // Show most recently used apps first, then alphabetical
-            const recentApps = JSON.parse(localStorage.getItem('webos-recent-apps') || '[]');
-            visibleApps.sort((a, b) => {
-                const aIndex = recentApps.indexOf(a.id);
-                const bIndex = recentApps.indexOf(b.id);
-                
-                if (aIndex !== -1 && bIndex !== -1) return aIndex - bIndex;
-                if (aIndex !== -1) return -1;
-                if (bIndex !== -1) return 1;
-                return a.name.localeCompare(b.name);
+    
+    setupEventListeners() {
+        if (window.EventBus) {
+            window.EventBus.on('app-registered', () => {
+                setTimeout(() => this.refreshIcons(), 100);
             });
             
-            // Trim to fit available space, but leave room for "more apps" indicator
-            visibleApps.splice(maxIcons - 1);
-        }
-        
-        // Render icons
-        visibleApps.forEach(app => this.createIcon(app));
-        
-        // Add "more apps" icon if needed
-        if (!canFitAllApps && this.registeredApps.size > visibleApps.length) {
-            this.createMoreAppsIcon();
-        }
-        
-        // Apply icon-specific styles
-        this.applyIconStyles();
-    },
+            window.EventBus.on('system-ready', () => {
+                setTimeout(() => this.refreshIcons(), 200);
+            });
 
-    createIcon(app) {
-        const { iconConfig } = this.currentLayout;
-        const { mode } = this.currentLayout;
-        
-        const iconElement = document.createElement('div');
-        iconElement.className = 'desktop-icon';
-        iconElement.dataset.appId = app.id;
-        
-        const iconImg = document.createElement('img');
-        iconImg.src = app.icon || this.getDefaultIcon();
-        iconImg.alt = app.name;
-        iconImg.style.cssText = `
-            width: ${iconConfig.size}px;
-            height: ${iconConfig.size}px;
-            object-fit: contain;
-        `;
-        
-        iconElement.appendChild(iconImg);
-        
-        if (this.settings.showLabels) {
-            const label = document.createElement('span');
-            label.textContent = app.name;
-            label.style.cssText = `
-                font-size: ${iconConfig.fontSize};
-                text-align: center;
-                color: white;
-                text-shadow: 1px 1px 2px rgba(0,0,0,0.7);
-                margin-top: 4px;
-                word-wrap: break-word;
-                max-width: ${iconConfig.size + 20}px;
-                display: block;
-            `;
-            iconElement.appendChild(label);
+            window.EventBus.on('orientation-changed', () => {
+                this.applyContainerStyles();
+                this.refreshIcons();
+            });
+
+            window.EventBus.on('display-resized', () => {
+                this.applyContainerStyles();
+            });
+
+            window.EventBus.on('layout-changed', () => {
+                this.applyContainerStyles();
+                this.refreshIcons();
+            });
+
+            window.EventBus.on('display-force-refresh', () => {
+                this.applyContainerStyles();
+                this.refreshIcons();
+            });
+
+            window.EventBus.on('desktop-settings-updated', (newSettings) => {
+                console.log('Desktop settings received update event:', newSettings);
+                this.updateSettings(newSettings);
+            });
         }
+    },
+    
+    refreshIcons() {
+        if (!this.iconContainer || !window.AppRegistry) return;
         
-        // Apply icon container styles
-        iconElement.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            cursor: pointer;
-            padding: ${iconConfig.padding};
-            border-radius: 8px;
-            transition: background-color 0.2s;
-            user-select: none;
-            ${mode === 'list' ? 'flex-direction: row; text-align: left;' : ''}
-        `;
+        this.iconContainer.innerHTML = '';
         
-        // Hover effect
-        iconElement.onmouseover = () => {
-            iconElement.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-        };
-        iconElement.onmouseout = () => {
-            iconElement.style.backgroundColor = 'transparent';
-        };
+        const apps = window.AppRegistry.getAllApps();
         
-        // FIX: The multi-instance issue is addressed here.
-        // It uses `addEventListener` for a cleaner, more robust event handling
-        // and removes the conflicting `ontouchend` property.
-        const openApp = (e) => {
-            // Prevent default behavior and event bubbling
-            e.preventDefault();
-            e.stopPropagation();
-            if (window.AppRegistry) {
-                window.AppRegistry.openApp(app.id);
+        apps.forEach(app => {
+            if (!this.hiddenApps.has(app.id) && !this.systemAppsNoDesktop.has(app.id)) {
+                this.createDesktopIcon(app);
             }
-        };
-
-        if (this.settings.doubleClickToOpen) {
-            iconElement.addEventListener('dblclick', openApp);
-        } else {
-            iconElement.addEventListener('click', openApp);
-        }
-        
-        this.iconsContainer.appendChild(iconElement);
+        });
     },
-
-    createMoreAppsIcon() {
-        const { iconConfig } = this.currentLayout;
-        
-        const moreIcon = document.createElement('div');
-        moreIcon.className = 'desktop-icon more-apps';
-        moreIcon.style.cssText = `
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            cursor: pointer;
-            padding: ${iconConfig.padding};
-            border-radius: 8px;
-            background-color: rgba(255, 255, 255, 0.1);
-            border: 2px dashed rgba(255, 255, 255, 0.3);
-        `;
-        
+    
+    createDesktopIcon(app) {
         const icon = document.createElement('div');
-        icon.style.cssText = `
-            width: ${iconConfig.size}px;
-            height: ${iconConfig.size}px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: ${iconConfig.size / 2}px;
-            color: white;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
+        icon.className = 'desktop-icon';
+        icon.dataset.appId = app.id;
+        
+        const iconSize = (window.DisplayManager && window.DisplayManager.getIconSize) ? window.DisplayManager.getIconSize() : 48;
+        const containerWidth = (window.DisplayManager && window.DisplayManager.getIconContainerWidth) ? window.DisplayManager.getIconContainerWidth() : iconSize + 30;
+        const isSystem = this.systemApps.has(app.id);
+        const isMobile = (window.DisplayManager && window.DisplayManager.isMobileDevice) ? window.DisplayManager.isMobileDevice() : window.innerWidth < 768;
+        
+        icon.innerHTML = `
+            <div class="desktop-icon-image" style="
+                width: ${iconSize}px;
+                height: ${iconSize}px;
+                margin-bottom: 4px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: ${Math.floor(iconSize * 0.6)}px;
+                background: rgba(255, 255, 255, 0.9);
+                border-radius: 8px;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+                border: 2px solid ${isSystem ? '#dc3545' : '#28a745'};
+                transition: all 0.2s ease;
+                backdrop-filter: blur(5px);
+            ">
+                ${this.getAppIcon(app)}
+            </div>
+            ${this.settings.showLabels ? `
+                <div class="desktop-icon-label" style="
+                    font-size: ${isMobile ? '10px' : '11px'};
+                    color: white;
+                    text-align: center;
+                    text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+                    line-height: 1.2;
+                    word-wrap: break-word;
+                    max-width: ${containerWidth}px;
+                    margin-top: 2px;
+                ">${app.name}</div>
+            ` : ''}
         `;
-        icon.textContent = '⋯';
         
-        if (this.settings.showLabels) {
-            const label = document.createElement('span');
-            label.textContent = 'More Apps';
-            label.style.cssText = `
-                font-size: ${iconConfig.fontSize};
-                text-align: center;
-                color: white;
-                margin-top: 4px;
-            `;
-            moreIcon.appendChild(icon);
-            moreIcon.appendChild(label);
-        } else {
-            moreIcon.appendChild(icon);
-        }
+        this.styleDesktopIcon(icon, containerWidth);
+        this.setupIconInteraction(icon, app);
         
-        // Click to open start menu
-        moreIcon.onclick = () => {
-            if (window.AppRegistry) {
-                window.AppRegistry.openApp('startmenu');
+        this.iconContainer.appendChild(icon);
+    },
+    
+    styleDesktopIcon(icon, containerWidth) {
+        icon.style.cssText = `
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: ${containerWidth}px;
+            padding: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+            margin: 2px;
+        `;
+        
+        icon.addEventListener('mouseenter', () => {
+            icon.style.background = 'rgba(255, 255, 255, 0.15)';
+            icon.style.backdropFilter = 'blur(10px)';
+            icon.style.transform = 'scale(1.05) translateY(-2px)';
+            
+            const iconImage = icon.querySelector('.desktop-icon-image');
+            if (iconImage) {
+                iconImage.style.transform = 'translateY(-2px)';
+                iconImage.style.boxShadow = '0 6px 16px rgba(0, 0, 0, 0.3)';
+                iconImage.style.background = 'rgba(255, 255, 255, 0.95)';
             }
-        };
+        });
         
-        this.iconsContainer.appendChild(moreIcon);
+        icon.addEventListener('mouseleave', () => {
+            icon.style.background = 'transparent';
+            icon.style.backdropFilter = 'none';
+            icon.style.transform = 'scale(1) translateY(0)';
+            
+            const iconImage = icon.querySelector('.desktop-icon-image');
+            if (iconImage) {
+                iconImage.style.transform = 'translateY(0)';
+                iconImage.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.2)';
+                iconImage.style.background = 'rgba(255, 255, 255, 0.9)';
+            }
+        });
     },
+    
+    setupIconInteraction(icon, app) {
+        let clickCount = 0;
+        let clickTimer = null;
+        
+        icon.addEventListener('click', (e) => {
+            e.preventDefault();
+            clickCount++;
+            
+            if (clickTimer) {
+                clearTimeout(clickTimer);
+            }
+            
+            const currentSettings = this.getFreshSettings();
+            const doubleClickMode = currentSettings.doubleClickToOpen;
+            
+            console.log('Icon clicked, doubleClickMode:', doubleClickMode, 'clickCount:', clickCount);
+            
+            clickTimer = setTimeout(() => {
+                if (clickCount === 1 && !doubleClickMode) {
+                    console.log('Single click launch');
+                    this.launchApp(app);
+                } else if (clickCount === 2 && doubleClickMode) {
+                    console.log('Double click launch');
+                    this.launchApp(app);
+                } else if (clickCount === 1 && doubleClickMode) {
+                    console.log('Single click select');
+                    this.selectIcon(icon);
+                }
+                clickCount = 0;
+            }, doubleClickMode ? 250 : 0);
+        });
+        
+        icon.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            this.showContextMenu(e, app);
+        });
 
-    applyIconStyles() {
-        // Add responsive scrolling for overflow
-        if (this.iconsContainer.scrollHeight > this.iconsContainer.clientHeight) {
-            this.iconsContainer.style.overflowY = 'auto';
-            this.iconsContainer.style.scrollbarWidth = 'thin';
+        let touchStartTime = 0;
+        icon.addEventListener('touchstart', (e) => {
+            touchStartTime = Date.now();
+        });
+
+        icon.addEventListener('touchend', (e) => {
+            const touchDuration = Date.now() - touchStartTime;
+            if (touchDuration < 500) {
+                e.preventDefault();
+                this.launchApp(app);
+            }
+        });
+    },
+    
+    getFreshSettings() {
+        let freshSettings = {};
+        
+        if (window.DisplayManager && window.DisplayManager.getSettings) {
+            freshSettings = { ...window.DisplayManager.getSettings() };
+        }
+        
+        try {
+            const saved = localStorage.getItem('webos-desktop-settings');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                freshSettings.showLabels = parsed.showLabels;
+                freshSettings.doubleClickToOpen = parsed.doubleClickToOpen;
+            }
+        } catch (error) {
+            console.warn('Failed to read fresh settings from localStorage:', error);
+        }
+        
+        return { ...this.settings, ...freshSettings };
+    },
+    
+    launchApp(app) {
+        if (window.AppRegistry) {
+            const instance = window.AppRegistry.openApp(app.id);
+            if (instance) {
+                const icon = document.querySelector(`[data-app-id="${app.id}"]`);
+                if (icon) {
+                    const iconImage = icon.querySelector('.desktop-icon-image');
+                    if (iconImage) {
+                        iconImage.style.animation = 'iconLaunch 0.3s ease';
+                        setTimeout(() => {
+                            iconImage.style.animation = '';
+                        }, 300);
+                    }
+                }
+            }
         }
     },
-
-    getDefaultIcon() {
-        return "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='48' height='48'><rect width='48' height='48' fill='%23666' rx='8'/><text x='24' y='30' text-anchor='middle' font-size='12' fill='white'>App</text></svg>";
+    
+    selectIcon(icon) {
+        document.querySelectorAll('.desktop-icon').forEach(i => {
+            i.classList.remove('selected');
+            i.style.background = 'transparent';
+        });
+        
+        icon.classList.add('selected');
+        icon.style.background = 'rgba(74, 144, 226, 0.3)';
+        icon.style.backdropFilter = 'blur(10px)';
     },
-
-    // Public API for settings app
-    getSettings() {
-        return { ...this.settings };
+    
+    showContextMenu(e, app) {
+        const menu = document.createElement('div');
+        menu.style.cssText = `
+            position: fixed;
+            left: ${e.clientX}px;
+            top: ${e.clientY}px;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(20px);
+            z-index: 9999;
+            padding: 8px 0;
+            min-width: 150px;
+        `;
+        
+        const items = [
+            { text: 'Open', action: () => this.launchApp(app) },
+            { text: 'Hide from Desktop', action: () => this.hideApp(app.id) }
+        ];
+        
+        items.forEach(item => {
+            const menuItem = document.createElement('div');
+            menuItem.textContent = item.text;
+            menuItem.style.cssText = `
+                padding: 8px 16px;
+                cursor: pointer;
+                font-size: 13px;
+                transition: background 0.2s;
+                color: #333;
+            `;
+            
+            menuItem.addEventListener('mouseenter', () => {
+                menuItem.style.background = 'rgba(74, 144, 226, 0.1)';
+            });
+            
+            menuItem.addEventListener('mouseleave', () => {
+                menuItem.style.background = 'transparent';
+            });
+            
+            menuItem.addEventListener('click', () => {
+                item.action();
+                menu.remove();
+            });
+            
+            menu.appendChild(menuItem);
+        });
+        
+        document.body.appendChild(menu);
+        
+        setTimeout(() => {
+            const removeMenu = (e) => {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', removeMenu);
+                }
+            };
+            document.addEventListener('click', removeMenu);
+        }, 10);
     },
-
+    
+    getAppIcon(app) {
+        if (app.icon) {
+            if (app.icon.startsWith('data:') || app.icon.startsWith('http')) {
+                return `<img src="${app.icon}" alt="${app.name}" style="width: 100%; height: 100%; object-fit: contain; border-radius: 4px;">`;
+            } else {
+                return app.icon;
+            }
+        }
+        return '📱';
+    },
+    
     hideApp(appId) {
         this.hiddenApps.add(appId);
-        this.saveSettings();
-        this.updateLayout();
+        this.refreshIcons();
+        
+        if (window.EventBus) {
+            window.EventBus.emit('app-hidden', { appId });
+        }
     },
-
+    
     showApp(appId) {
         this.hiddenApps.delete(appId);
-        this.saveSettings();
-        this.updateLayout();
+        this.refreshIcons();
+        
+        if (window.EventBus) {
+            window.EventBus.emit('app-shown', { appId });
+        }
     },
-
-    getVisibleApps() {
-        return Array.from(this.registeredApps.values())
-            .filter(app => !this.hiddenApps.has(app.id) && !this.systemApps.has(app.id));
+    
+    updateSettings(newSettings, options = {}) {
+        console.log('DesktopIconManager.updateSettings called with:', newSettings);
+        
+        const behaviorSettings = {};
+        if (newSettings.showLabels !== undefined) behaviorSettings.showLabels = newSettings.showLabels;
+        if (newSettings.doubleClickToOpen !== undefined) behaviorSettings.doubleClickToOpen = newSettings.doubleClickToOpen;
+        
+        this.settings = { ...this.settings, ...behaviorSettings };
+        console.log('Updated DesktopIconManager internal settings:', this.settings);
+        
+        if (window.DisplayManager) {
+            const displaySettings = {};
+            ['iconSize', 'iconSpacing', 'layoutMode', 'columnsPerRow'].forEach(key => {
+                if (newSettings[key] !== undefined) {
+                    displaySettings[key] = newSettings[key];
+                }
+            });
+            
+            if (Object.keys(displaySettings).length > 0) {
+                console.log('Passing display settings to DisplayManager:', displaySettings);
+                window.DisplayManager.updateSettings(displaySettings);
+            }
+        }
+        
+        if (behaviorSettings.doubleClickToOpen !== undefined) {
+            console.log('Double-click behavior changed, forcing complete icon refresh');
+        }
+        
+        this.refreshIcons();
+        
+        if (!options.isInitialLoad && window.EventBus) {
+            window.EventBus.emit('desktop-settings-applied', this.settings);
+        }
     },
-
+    
+    getSettings() {
+        const displaySettings = window.DisplayManager && window.DisplayManager.getSettings ? 
+            window.DisplayManager.getSettings() : {};
+        
+        return { ...displaySettings, ...this.settings };
+    },
+    
     getAllApps() {
-        return Array.from(this.registeredApps.values());
+        return window.AppRegistry ? window.AppRegistry.getAllApps() : [];
     },
 
-    // Utility function for debouncing resize events
-    debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
+    getStatus() {
+        const displayStatus = window.DisplayManager ? (window.DisplayManager.getStatus ? window.DisplayManager.getStatus() : {}) : { message: 'DisplayManager not found.' };
+        return {
+            ...displayStatus,
+            initialized: this.initialized,
+            iconCount: this.iconContainer ? this.iconContainer.children.length : 0,
+            containerExists: !!this.iconContainer,
+            hiddenApps: Array.from(this.hiddenApps),
+            settings: this.getSettings(),
+            freshSettings: this.getFreshSettings()
         };
+    },
+
+    forceRefresh() {
+        console.log('Force refreshing desktop icons...');
+        if (window.DisplayManager) {
+            window.DisplayManager.forceRefresh();
+        }
+        this.applyContainerStyles();
+        this.refreshIcons();
     }
 };
 
-// Auto-initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => {
-    window.DesktopIconManager.init();
-});
+const style = document.createElement('style');
+style.textContent = `
+    @keyframes iconLaunch {
+        0% { transform: scale(1); }
+        50% { transform: scale(0.9); }
+        100% { transform: scale(1); }
+    }
+    
+    .desktop-icon.selected {
+        background: rgba(74, 144, 226, 0.3) !important;
+        backdrop-filter: blur(10px) !important;
+    }
+    
+    @media (max-width: 768px) {
+        .desktop-icon {
+            min-height: 44px;
+        }
+    }
+`;
+document.head.appendChild(style);
 
-// Also init immediately if DOM already loaded
-if (document.readyState !== 'loading') {
-    window.DesktopIconManager.init();
+if (typeof window !== 'undefined') {
+    const initManager = () => {
+        if (window.AppRegistry && window.DisplayManager && window.DesktopSettingsApp) {
+            window.DesktopIconManager.init();
+        } else {
+            if (!window.AppRegistry) console.warn('DesktopIconManager waiting for AppRegistry.');
+            if (!window.DisplayManager) console.warn('DesktopIconManager waiting for DisplayManager.');
+            if (!window.DesktopSettingsApp) console.warn('DesktopIconManager waiting for DesktopSettingsApp.');
+
+            const waitForDeps = setInterval(() => {
+                if (window.AppRegistry && window.DisplayManager && window.DesktopSettingsApp) {
+                    clearInterval(waitForDeps);
+                    window.DesktopIconManager.init();
+                }
+            }, 100);
+        }
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', () => setTimeout(initManager, 300));
+    } else {
+        setTimeout(initManager, 300);
+    }
 }
 
+if (typeof window !== 'undefined') {
+    window.desktopIconsDebug = () => {
+        console.log('Desktop Icons Status:', window.DesktopIconManager.getStatus());
+        return window.DesktopIconManager.getStatus();
+    };
+}
 
-//*******************
+(function registerDesktopIconManagerDoc() {
+  const tryRegister = () => {
+    if (window.Docs && window.Docs.initialized && typeof window.Docs.register === 'function') {
+      window.Docs.register('desktop-icon-manager', {
+        name: "DesktopIconManager",
+        version: "1.0.1",
+        description: "Manages the rendering, styling, and interaction logic for all icons displayed on the desktop surface. FIXED: Double-click behavior now works correctly.",
+        type: "System Component",
+        dependencies: ["AppRegistry", "DisplayManager", "EventBus", "DesktopSettingsApp"],
+        features: [
+          "Renders icons based on AppRegistry and visibility status.",
+          "Handles click (single/double) and touch interaction with proper settings refresh.",
+          "Implements right-click context menu (Open, Hide).",
+          "Applies visual settings (size, spacing, labels) provided by DisplayManager/Settings.",
+          "Loads and applies persistent settings on initialization.",
+          "FIXED: Double-click setting now applies immediately without refresh."
+        ],
+        methods: [
+          { name: "init()", description: "Initializes the manager and loads initial settings." },
+          { name: "refreshIcons()", description: "Clears and re-renders all desktop icons with fresh event handlers." },
+          { name: "updateSettings(newSettings)", description: "Updates internal settings and triggers re-render/DisplayManager update." },
+          { name: "getFreshSettings()", description: "Gets current settings directly from localStorage and DisplayManager." },
+          { name: "hideApp(appId)", description: "Removes an app icon from the desktop." }
+        ],
+        events: [
+          "desktop-icons-ready", "desktop-settings-applied", "app-hidden", "app-shown"
+        ],
+        autoGenerated: false
+      });
+      console.log('DesktopIconManager documentation registered with Docs service');
+      return true;
+    }
+    return false;
+  };
 
+  if (tryRegister()) return;
+
+  if (window.EventBus) {
+    const onDocsReady = () => {
+      if (tryRegister()) {
+        window.EventBus.off('docs-ready', onDocsReady);
+      }
+    };
+    window.EventBus.on('docs-ready', onDocsReady);
+  }
+
+  let attempts = 0;
+  const pollInterval = setInterval(() => {
+    if (tryRegister() || attempts++ > 50) {
+      clearInterval(pollInterval);
+    }
+  }, 100);
+})();

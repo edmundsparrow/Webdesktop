@@ -1,179 +1,160 @@
-// FILE: /SYSTEM/CORE/event-bus.js
-// VERSION: 1.1.0
-//
-// EVENT-BUS.JS - LIGHTWEIGHT EVENT COMMUNICATION SERVICE
-//
-// PURPOSE:
-//   Minimal publish-subscribe event system enabling decoupled communication
-//   between webdesktop components without direct dependencies.
-//
-// ARCHITECTURE:
-//   - Simple Map-based listener storage with window.EventBus namespace
-//   - Synchronous event emission with immediate callback execution
-//   - No event queuing or async handling for minimal complexity
-//   - Memory-efficient with automatic cleanup on listener removal
-//
-// LIFECYCLE:
-//   1. EventBus available immediately when script loads
-//   2. Components register listeners via EventBus.on(event, callback)
-//   3. Components emit events via EventBus.emit(event, data)
-//   4. All registered listeners execute synchronously in registration order
-//
-// KEY FEATURES:
-//   • Lightweight pub-sub pattern with zero external dependencies
-//   • Synchronous event handling for predictable execution order
-//   • Multiple listeners per event with automatic callback management
-//   • Simple API: just on() and emit() methods
-//
-// INTEGRATION:
-//   - AppRegistry: Emits 'app-registered' when new apps added
-//   - Docs Service: Listens for 'app-registered' to collect documentation
-//   - System Components: Cross-component communication without tight coupling
-//
-// DEPENDENCIES:
-//   None - completely self-contained
-//
-// CUDOS:
-//   edmundsparrow.netlify.app | whatsappme @ 09024054758 | 
-//   webaplications5050@gmail.com
-//
-// ---------------------------------------------------------------------
+/* ========================================
+ * FILE: core/event-bus.js
+ * VERSION: 1.0.0
+ * BUILD DATE: 2025-09-29
+ *
+ * PURPOSE:
+ *   Core communication layer for Unity Station. Provides a
+ *   global publish/subscribe event system (EventBus) that
+ *   allows all modules and apps to communicate without
+ *   direct dependencies.
+ *
+ * ARCHITECTURE:
+ *   - Singleton object exposed as window.EventBus
+ *   - Map-based storage of event → listeners[]
+ *   - Simple API: on(), emit(), off(), getListenerCount()
+ *   - No external dependencies (loads first in system)
+ *
+ * LIFECYCLE:
+ *   1. Loaded before any other core file
+ *   2. Other system modules subscribe & emit events
+ *   3. Runs throughout environment lifetime
+ *   4. Never replaced or reloaded
+ *
+ * FEATURES:
+ *   - Unlimited listeners per event
+ *   - Emit events with optional payload
+ *   - Safe error isolation per listener
+ *   - Remove listeners individually
+ *   - Debug listener counts
+ *
+ * EXAMPLE USAGE:
+ *   EventBus.on('app-launched', data => console.log('App launched', data));
+ *   EventBus.emit('app-launched', { id: 'clock' });
+ *
+ * AUTHOR:
+ *   edmundsparrow.netlify.app | whatsappme @ 09024054758 | webaplications5050@gmail.com
+ * ======================================== */
 
-// Core Event Bus Implementation
 window.EventBus = {
-    listeners: new Map(),
-    
-    on(event, callback) {
-        if (!this.listeners.has(event)) {
-            this.listeners.set(event, []);
-        }
-        this.listeners.get(event).push(callback);
-    },
-    
-    emit(event, data) {
-        if (this.listeners.has(event)) {
-            this.listeners.get(event).forEach(callback => {
-                try {
-                    callback(data);
-                } catch (error) {
-                    console.error(`Error in event listener for '${event}':`, error);
-                }
-            });
-        }
-    },
-    
-    // Utility method to remove listeners
-    off(event, callback) {
-        if (this.listeners.has(event)) {
-            const callbacks = this.listeners.get(event);
-            const index = callbacks.indexOf(callback);
-            if (index > -1) {
-                callbacks.splice(index, 1);
-                if (callbacks.length === 0) {
-                    this.listeners.delete(event);
-                }
-            }
-        }
-    },
-    
-    // Get all registered events (for debugging)
-    getEvents() {
-        return Array.from(this.listeners.keys());
-    },
-    
-    // Get listener count for an event
-    getListenerCount(event) {
-        return this.listeners.has(event) ? this.listeners.get(event).length : 0;
+  listeners: new Map(),
+
+  /**
+   * Register a listener for an event
+   * @param {string} event - Event name
+   * @param {function} callback - Function to execute when event fires
+   */
+  on(event, callback) {
+    if (!event || typeof callback !== 'function') {
+      console.warn('EventBus.on: Invalid event or callback');
+      return;
     }
+    
+    if (!this.listeners.has(event)) {
+      this.listeners.set(event, []);
+    }
+    this.listeners.get(event).push(callback);
+  },
+
+  /**
+   * Emit an event to all listeners
+   * @param {string} event - Event name
+   * @param {*} [data] - Optional payload
+   */
+  emit(event, data) {
+    if (!event) return;
+    
+    if (this.listeners.has(event)) {
+      const callbacks = this.listeners.get(event);
+      callbacks.forEach(callback => {
+        try {
+          callback(data);
+        } catch (error) {
+          console.error(`EventBus error in ${event} listener:`, error);
+        }
+      });
+    }
+  },
+
+  /**
+   * Remove a specific listener
+   * @param {string} event - Event name
+   * @param {function} callback - Function reference to remove
+   */
+  off(event, callback) {
+    if (!this.listeners.has(event)) return;
+    
+    const callbacks = this.listeners.get(event);
+    const index = callbacks.indexOf(callback);
+    if (index > -1) {
+      callbacks.splice(index, 1);
+    }
+    
+    // Clean up empty event arrays
+    if (callbacks.length === 0) {
+      this.listeners.delete(event);
+    }
+  },
+
+  /**
+   * Get number of listeners for an event
+   * @param {string} event - Event name
+   * @returns {number}
+   */
+  getListenerCount(event) {
+    return this.listeners.has(event) ? this.listeners.get(event).length : 0;
+  }
 };
 
-// Self-documentation registration with proper timing
-(function registerEventBusDocumentation() {
-    const documentation = {
-        name: "Event Bus",
-        version: "1.1.0",
-        description: "Lightweight publish-subscribe event system for decoupled component communication across the webdesktop environment",
+// Register documentation with Docs service - wait for it to be ready
+(function registerEventBusDoc() {
+  const tryRegister = () => {
+    if (window.Docs && window.Docs.initialized && typeof window.Docs.register === 'function') {
+      window.Docs.register('event-bus', {
+        name: "EventBus",
+        version: "1.0.0",
+        description: "Core communication layer providing a global publish/subscribe event system for Unity Station modules and apps.",
         type: "System Service",
         features: [
-            "Simple pub-sub pattern with Map-based listener storage",
-            "Synchronous event emission with predictable execution order",
-            "Multiple listeners per event with automatic management",
-            "Zero dependencies - completely self-contained service",
-            "Memory efficient with minimal overhead",
-            "Error handling for individual event listeners",
-            "Utility methods for listener management and debugging"
+          "Global singleton (window.EventBus)",
+          "Unlimited listeners per event",
+          "Emit events with optional data payload",
+          "Remove specific listeners with .off()",
+          "Error-safe listener execution",
+          "Listener count inspection via .getListenerCount()"
         ],
-        dependencies: [],
         methods: [
-            { name: "on", description: "Register event listener: EventBus.on('event', callback)" },
-            { name: "emit", description: "Emit event to all listeners: EventBus.emit('event', data)" },
-            { name: "off", description: "Remove specific event listener: EventBus.off('event', callback)" },
-            { name: "getEvents", description: "Get list of all registered events for debugging" },
-            { name: "getListenerCount", description: "Get number of listeners for a specific event" }
+          { name: "on(event, callback)", description: "Register a listener for a given event" },
+          { name: "emit(event, data)", description: "Emit an event with optional payload" },
+          { name: "off(event, callback)", description: "Remove a specific listener" },
+          { name: "getListenerCount(event)", description: "Return number of listeners for an event" }
         ],
-        notes: "Core system service that enables loose coupling between components. Used extensively by AppRegistry, Docs service, and other system components for event-driven communication. All event emission is synchronous to ensure predictable execution order.",
-        cudos: "edmundsparrow.netlify.app | whatsappme @ 09024054758 | webaplications5050@gmail.com",
-        auto_generated: false
-    };
-
-    const tryRegister = () => {
-        if (window.Docs && 
-            typeof window.Docs.registerDocumentation === 'function' && 
-            (window.Docs.isReady ? window.Docs.isReady() : window.Docs.isInitialized)) {
-            
-            try {
-                window.Docs.registerDocumentation('eventbus', documentation);
-                console.log('EventBus documentation registered successfully');
-                return true;
-            } catch (error) {
-                console.warn('Failed to register EventBus documentation:', error);
-                return false;
-            }
-        }
-        return false;
-    };
-
-    // Try immediate registration
-    if (tryRegister()) {
-        return;
+        autoGenerated: false
+      });
+      console.log('EventBus documentation registered with Docs service');
+      return true;
     }
+    return false;
+  };
 
-    // Listen for docs service ready event
-    window.EventBus.on('docs-service-ready', () => {
-        if (tryRegister()) {
-            // Remove this listener after successful registration
-            window.EventBus.off('docs-service-ready', arguments.callee);
-        }
-    });
+  // Try immediate registration
+  if (tryRegister()) return;
 
-    // Fallback timeout registration (ensures registration even if event is missed)
-    setTimeout(() => {
-        if (!tryRegister()) {
-            console.warn('EventBus documentation registration failed after timeout - Docs service may not be available');
-        }
-    }, 500);
-
-    // Additional fallback for very late Docs service initialization
-    const maxRetries = 10;
-    let retryCount = 0;
-    
-    const retryRegistration = () => {
-        if (retryCount >= maxRetries) {
-            console.warn('EventBus documentation registration abandoned after maximum retries');
-            return;
-        }
-        
-        if (!tryRegister()) {
-            retryCount++;
-            setTimeout(retryRegistration, 1000 * retryCount); // Exponential backoff
-        }
+  // Wait for docs-ready event
+  if (window.EventBus) {
+    const onDocsReady = () => {
+      if (tryRegister()) {
+        window.EventBus.off('docs-ready', onDocsReady);
+      }
     };
-    
-    // Start retry sequence after initial delay
-    setTimeout(retryRegistration, 1000);
-})();
+    window.EventBus.on('docs-ready', onDocsReady);
+  }
 
-// Export for module environments (if needed)
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = window.EventBus;
-}
+  // Fallback: poll for Docs initialization
+  let attempts = 0;
+  const pollInterval = setInterval(() => {
+    if (tryRegister() || attempts++ > 50) {
+      clearInterval(pollInterval);
+    }
+  }, 100);
+})();
