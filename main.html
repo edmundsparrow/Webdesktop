@@ -3,48 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebOS</title>
-    
-    <link rel="stylesheet" href="css/main.css">
-    <link rel="stylesheet" href="css/desktop.css">
-    <link rel="stylesheet" href="css/taskbar.css">
-    <link rel="stylesheet" href="css/window.css">
+    <title>Gnoke Station</title>
+    <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
     <div id="desktop">
-        <div id="icons"></div>
         <div id="windows-container"></div>
     </div>
-    
-    <div id="taskbar">
-        <div class="start-button">Start</div>
-        <div class="taskbar-items"></div>
-        <div class="show-desktop-button" title="Show Desktop">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="white" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 5h16v11H4V5zm0-2c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h7v2H8v2h8v-2h-3v-2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2H4z"></path>
-            </svg>
-        </div>
-        <div class="system-tray"></div>
-    </div>  
 
-    <!-- Core System Services - Load First -->
+    <div id="taskbar">
+        <button class="start-button" id="start-btn">
+            <span>⊞</span> Start
+        </button>
+        <div class="taskbar-items" id="taskbar-items"></div>
+        <div class="clock" id="clock">--:--</div>
+    </div>
+
+    <!-- Core system files (load first) -->
     <script src="core/event-bus.js"></script>
-    <script src="core/app-loader.js"></script>
     <script src="core/window-manager.js"></script>
     <script src="core/app-registry.js"></script>
-    
-    <!-- Storage System - Load After Core, Before Desktop -->
-    <script src="core/storage.js"></script>
-      
-    <!-- Desktop Environment Services -->
     <script src="core/desktop.js"></script>
-    <script src="core/start.js"></script>
     <script src="core/taskbar.js"></script>
-    <script src="core/desktop-icons.js"></script>
-    <script src="core/docs.js"></script>
-    
-    <!-- Application Loader - Load Last -->
     <script src="core/main.js"></script>
+    <script src="core/keypad-inject.js"></script>
+    <script src="core/display.js"></script>
 
+    <!-- Core documentation service (part of system core) -->
+    <script src="core/apps/docs.js"></script>
+
+    <!-- User app loader (loads user apps including about.js) -->
+    <script src="core/apps/app-loader.js"></script>
+    <script src="core/desktop-icons.js"></script>
+    <script src="core/start-menu.js"></script>
+    <script src="core/apps/programs.js"></script>
 </body>
 </html>
